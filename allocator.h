@@ -9,7 +9,7 @@
   #define null NULL
 #endif
 
-enum{IS_FREE, IS_FREE_POINTER, IS_FINAL_FREE, IS_ALLOCATED};
+enum{IS_FREE, IS_FREE_POINTER, IS_FREE_FINAL, IS_ALLOCATED};
 
 
 #define ALLOCATOR_USE_DEFAULT_PAGE_SIZE 0
@@ -22,7 +22,6 @@ enum{IS_FREE, IS_FREE_POINTER, IS_FINAL_FREE, IS_ALLOCATED};
 #define ALLOCATOR_ALIGN8(x) (x % 8)? (((x >> 3) + 1) << 3) : x
 
 typedef uint8_t byte;
-typedef uint64_t word;
 
 typedef struct allocator{
   void* page;
@@ -65,7 +64,7 @@ static void allocation_print(allocator_allocation* b){
   switch (b->head->status) {
     case IS_FREE: printf(",status:\tIS_FREE\t"); break;
     case IS_FREE_POINTER: printf(",status:\tIS_FREE_POINTER %p\t",(uint64_t*)*(uint64_t*)b->ptr); break;
-    case IS_FINAL_FREE: printf(",status:\tIS_FINAL_FREE\t"); break;
+    case IS_FREE_FINAL: printf(",status:\tIS_FREE_FINAL\t"); break;
     case IS_ALLOCATED: printf(",status:\tIS_ALLOCATED\t"); break;
   }
   printf(", data: %p\n", b->ptr);
@@ -75,10 +74,10 @@ static void allocation_print(allocator_allocation* b){
 #define ALLOCATION_HEADER_SIZE sizeof(allocator_header)
 
 //splits a block in half the old block is the left side
-static int8_t allocation_split(allocator_allocation old_alloc,uint64_t rsize,allocator_allocation* left_size,allocator_allocation* right_size){
+static int8_t allocation_split(allocator_allocation old_alloc,uint64_t rsize,allocator_allocation* left_side,allocator_allocation* right_side){
   uint64_t new_block_size = old_alloc.head->size - rsize;
 
-  if(old_alloc.head->status != IS_FREE || new_block_size < 8) return -1;
+  if(new_block_size < 8) return -1;
 
   old_alloc.head->size = rsize;
   
@@ -87,8 +86,8 @@ static int8_t allocation_split(allocator_allocation old_alloc,uint64_t rsize,all
 
   *new_alloc.head = (allocator_header){new_block_size - ALLOCATION_HEADER_SIZE, IS_FREE};
   
-  if(left_size)  *left_size = old_alloc;
-  if(right_size) *right_size = new_alloc;
+  if(left_side)  *left_side = old_alloc;
+  if(right_side) *right_side = new_alloc;
 
   return 0;
 }
@@ -115,26 +114,51 @@ static allocator allocator_init(uint64_t page_size){
   allocation = allocation_map_internal(page);\
   }\
 
-
 //if it returns null there is no space left
 static void* allocator_alloc_internal(allocator* a,uint64_t data_size){
-  allocator_allocation prev_free;
-  ALLOCATOR_INTERNAL_PARCING_BOILDERPLATE(
-    if((allocation.head->status == IS_FREE || allocation.head->status == IS_FINAL_FREE) && allocation.head->size >= data_size){
-      if(allocation.head->size > data_size){
-        allocation_split(allocation,data_size,null,null);
-      }
+  byte* block = (byte*)a->page;
+  allocator_allocation allocation = allocation_map_internal(block);
+  allocator_allocation orign = allocation;
+  const uint64_t page_size = a->page_size;
+  byte* end = block + page_size;
+  allocator_allocation jump;
+  
+  while(block + allocation.head->size < end){
+      if((allocation.head->status == IS_FREE || allocation.head->status == IS_FREE_FINAL) && allocation.head->size >= data_size){
+        //split the block in half if you can    
+        allocator_allocation left_side = allocation;
+        allocator_allocation right_side;
+        if(allocation.head->size > data_size){
+          allocation_split(allocation, data_size, &left_side, &right_side);
+          
+          if(orign.head->status == IS_FREE_POINTER) {
+            *(uint64_t*)orign.ptr = (uint64_t)(uint64_t*)right_side.ptr;
+          }
+          // printf("Split\n\tleft side: %p\n\tright side: %p\n",left_side.ptr,right_side.ptr);
 
-      allocation.head->status = IS_ALLOCATED;
-      return allocation.ptr;
-    }else if(allocation.head->status == IS_FREE_POINTER){
-      if(allocation.head->size > data_size){
-        allocation_split(allocation,data_size,null,null);
-      }else{
-        allocation = allocation_map((uint64_t*)*(uint64_t*)allocation.ptr);
+        }
+        //allocate
+        left_side.head->status = IS_ALLOCATED;
+        return left_side.ptr;
       }
-    }
-  )
+      else if(allocation.head->status == IS_FREE_POINTER){
+        jump = allocation_map((uint64_t*)*(uint64_t*)allocation.ptr);
+        if(jump.head->status == IS_ALLOCATED)
+          {allocation.head->status = IS_FREE;}
+        else if(jump.head->size >= data_size){
+          orign = allocation;
+          block = jump.ptr - sizeof(allocator_header);
+          // printf("JUMPING to %p\n\n\n\n\n",jump.ptr);
+          goto SKIP;
+        }
+
+      }
+    
+
+    block = allocation.ptr + allocation.head->size;
+    SKIP:
+    allocation = allocation_map_internal(block);
+  }
   return null;
 }
 
@@ -158,7 +182,7 @@ static void* allocator_allocation_recursion_internal(allocator* a,uint64_t data_
 static void* allocator_malloc(allocator* a,uint64_t data_size){
   data_size += sizeof(allocator_header);
   data_size = ALLOCATOR_ALIGN8(data_size);
-
+  // printf("allocation size:%li\n",data_size);
   return allocator_allocation_recursion_internal(a,data_size);
 }
 
@@ -171,7 +195,7 @@ static void allocator_defragment_internal(allocator* a){
   byte* page = (byte*)a->page;
   allocator_allocation allocation = allocation_map_internal(page);
   const uint64_t page_size = a->page_size;
-  byte *end = page + page_size ;
+  byte *end = page + page_size;
   allocator_allocation prev_allocation = allocation;
 
   while (allocation.ptr + allocation.head->size <= end){
@@ -196,7 +220,7 @@ static void allocator_defragment_internal(allocator* a){
     page = allocation.ptr + allocation.head->size;
     allocation = allocation_map_internal(page);
   }
-  if(prev_allocation.head->status == IS_FREE) prev_allocation.head->status = IS_FINAL_FREE; 
+  if(prev_allocation.head->status == IS_FREE || prev_allocation.head->status == IS_FREE_POINTER) prev_allocation.head->status = IS_FREE_FINAL; 
 }
 
 
@@ -264,7 +288,7 @@ static inline allocator_arena allocator_arena_init(uint64_t capacity,allocator* 
   allocator* alloc = a;
   if(alloc == null){
     alloc = (allocator*)malloc(sizeof(allocator));
-    *alloc = allocator_init(capacity+capacity/2);
+    *alloc = allocator_init(capacity+capacity/2); //Magic NO touch
   }
 
   void* ptr = allocator_malloc(alloc, capacity);
