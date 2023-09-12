@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #ifndef null
-  #define null 0
+  #define null NULL
 #endif
 
 enum{IS_FREE, IS_FREE_POINTER, IS_FINAL_FREE, IS_ALLOCATED};
@@ -56,17 +56,17 @@ static allocator_allocation allocation_map(void* ptr){
   };
 }
 
-#define ALLOCATOR_USE_PRINT_FUCNTION
-#ifdef ALLOCATOR_USE_PRINT_FUCNTION
+#define ALLOCATOR_DEFINE_PRINT_FUCNTION
+#ifdef ALLOCATOR_DEFINE_PRINT_FUCNTION
 #include <stdio.h>
 static void allocation_print(allocator_allocation* b){
   
   printf("size: %lu",b->head->size);
   switch (b->head->status) {
-    case IS_FREE: printf(",status: IS_FREE"); break;
-    case IS_FREE_POINTER: printf(",status: IS_FREE_POINTER %p",(uint64_t*)*(uint64_t*)b->ptr); break;
-    case IS_FINAL_FREE: printf(",status: IS_FINAL_FREE"); break;
-    case IS_ALLOCATED: printf(",status: IS_ALLOCATED"); break;
+    case IS_FREE: printf(",status:\tIS_FREE\t"); break;
+    case IS_FREE_POINTER: printf(",status:\tIS_FREE_POINTER %p\t",(uint64_t*)*(uint64_t*)b->ptr); break;
+    case IS_FINAL_FREE: printf(",status:\tIS_FINAL_FREE\t"); break;
+    case IS_ALLOCATED: printf(",status:\tIS_ALLOCATED\t"); break;
   }
   printf(", data: %p\n", b->ptr);
 }
@@ -118,15 +118,21 @@ static allocator allocator_init(uint64_t page_size){
 
 //if it returns null there is no space left
 static void* allocator_alloc_internal(allocator* a,uint64_t data_size){
-  // data_size += sizeof(header);
-  // data_size = ALLOCATOR_ALIGN8(data_size);
   allocator_allocation prev_free;
   ALLOCATOR_INTERNAL_PARCING_BOILDERPLATE(
-    if((allocation.head->status == IS_FREE || allocation.head->status == IS_FREE_POINTER) && allocation.head->size >= data_size){
-      if(allocation.head->size > data_size) allocation_split(allocation,data_size,null,null);
+    if((allocation.head->status == IS_FREE || allocation.head->status == IS_FINAL_FREE) && allocation.head->size >= data_size){
+      if(allocation.head->size > data_size){
+        allocation_split(allocation,data_size,null,null);
+      }
 
       allocation.head->status = IS_ALLOCATED;
       return allocation.ptr;
+    }else if(allocation.head->status == IS_FREE_POINTER){
+      if(allocation.head->size > data_size){
+        allocation_split(allocation,data_size,null,null);
+      }else{
+        allocation = allocation_map((uint64_t*)*(uint64_t*)allocation.ptr);
+      }
     }
   )
   return null;
@@ -157,11 +163,11 @@ static void* allocator_malloc(allocator* a,uint64_t data_size){
 }
 
 static void allocator_free(void* ptr){
-  allocator_header* head = (allocator_header*)((uint8_t*)ptr - sizeof(allocator_header)); 
+  allocator_header* head = (allocator_header*)((byte*)ptr - sizeof(allocator_header)); 
   head->status = IS_FREE;
 }
 
-static void allocator_collect_blocks_internal(allocator* a){
+static void allocator_defragment_internal(allocator* a){
   byte* page = (byte*)a->page;
   allocator_allocation allocation = allocation_map_internal(page);
   const uint64_t page_size = a->page_size;
@@ -194,10 +200,10 @@ static void allocator_collect_blocks_internal(allocator* a){
 }
 
 
-static void allocator_merge(allocator* a){
+static void allocator_defragment(allocator* a){
   allocator* it = a;
   while (it != null) {
-    allocator_collect_blocks_internal(it);
+    allocator_defragment_internal(it);
     it = it->next;
   }
 }
@@ -231,19 +237,15 @@ static void allocator_print_allocations(allocator *a){
 
 static void allocator_dealloc(allocator* a){
   allocator* it = a;
-  while(it != null){
-    free(it->page);
-    it = it->next;
-  }
-
+  if(it->page) free(it->page);
   //gotta start from a->next because a might be allocated on the stack
   it = a->next;
   while(it != null){
     allocator* tmp = it;
+    if(it->page) free(it->page);
     it = it->next;
-    free(tmp);
+    if(tmp) free(tmp);
   }
-
 }
 
 
@@ -260,12 +262,14 @@ typedef struct allocator_arena{
 //if the a is null then an allocator will be create for you
 static inline allocator_arena allocator_arena_init(uint64_t capacity,allocator* a){
   allocator* alloc = a;
-  if(!alloc){
+  if(alloc == null){
     alloc = (allocator*)malloc(sizeof(allocator));
-    *alloc = allocator_init(capacity);
+    *alloc = allocator_init(capacity+capacity/2);
   }
 
-  return (allocator_arena){alloc,capacity,0,allocator_malloc(alloc, capacity)};
+  void* ptr = allocator_malloc(alloc, capacity);
+
+  return (allocator_arena){alloc,capacity,0,ptr};
 }
 
 inline void* allocator_arena_malloc(allocator_arena* aa,uint64_t size){
@@ -281,6 +285,8 @@ inline void allocator_arena_reset(allocator_arena* aa){
   aa->size = 0;
 }
 
-static inline void allocator_arena_free(allocator_arena* aa){
+
+static inline allocator* allocator_arena_free(allocator_arena* aa){
   allocator_free(aa->ptr);
+  return aa->alloc;
 }
