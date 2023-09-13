@@ -77,20 +77,20 @@ static void allocation_print(allocator_allocation* b){
 static int8_t allocation_split(allocator_allocation old_alloc,uint64_t rsize,allocator_allocation* left_side,allocator_allocation* right_side){
   uint64_t new_block_size = old_alloc.head->size - rsize;
 
-  if(new_block_size < 8) return -1;
+  if(new_block_size < 8){return -1;}
 
   old_alloc.head->size = rsize;
-  
   uint8_t* new_alloc_start = old_alloc.ptr + rsize;
   allocator_allocation new_alloc = allocation_map_internal(new_alloc_start);
 
   *new_alloc.head = (allocator_header){new_block_size - ALLOCATION_HEADER_SIZE, old_alloc.head->status};
+
   if(old_alloc.head->status == IS_FREE_POINTER){
     *(uint64_t*)new_alloc.ptr = (uint64_t)*(uint64_t*)old_alloc.ptr; 
   }
-  
-  if(left_side)  *left_side = old_alloc;
-  if(right_side) *right_side = new_alloc;
+
+  if(left_side){*left_side = old_alloc;}
+  if(right_side){*right_side = new_alloc;}
 
   return 0;
 }
@@ -106,19 +106,8 @@ static allocator allocator_init(uint64_t page_size){
   return a;
 }
 
-#define ALLOCATOR_INTERNAL_PARCING_BOILDERPLATE(x)\
-  byte* page = (byte*)a->page;\
-  allocator_allocation allocation = allocation_map_internal(page);\
-  const uint64_t page_size = a->page_size;\
-  byte* end = page + page_size - 1;\
-  while(page + allocation.head->size < end){\
-  x\
-  page = allocation.ptr + allocation.head->size;\
-  allocation = allocation_map_internal(page);\
-  }\
-
 //if it returns null there is no space left
-static void* allocator_allocate_strategy_internal(uint64_t* data_size, allocator_allocation* allocation, allocator_allocation* origin) {
+static void* allocator_allocate_write_internal(uint64_t* data_size, allocator_allocation* allocation, allocator_allocation* origin) {
   allocator_allocation left_side = *allocation;
   allocator_allocation right_side;
   if (allocation->head->size > *data_size) {
@@ -139,12 +128,12 @@ static void *allocator_alloc_internal(allocator *a, uint64_t data_size) {
   
   while(block + allocation.head->size < end){
     if((allocation.head->status == IS_FREE || allocation.head->status == IS_FREE_FINAL) && allocation.head->size >= data_size){
-      return allocator_allocate_strategy_internal(&data_size, &allocation, &origin);
+      return allocator_allocate_write_internal(&data_size, &allocation, &origin);
     }
     else if(allocation.head->status == IS_FREE_POINTER){
 
       if(allocation.head->size >= data_size){
-        return allocator_allocate_strategy_internal(&data_size, &allocation, &origin);
+        return allocator_allocate_write_internal(&data_size, &allocation, &origin);
       }
 
       jump = allocation_map((uint64_t*)*(uint64_t*)allocation.ptr);
