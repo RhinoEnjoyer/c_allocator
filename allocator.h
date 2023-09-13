@@ -115,49 +115,48 @@ static allocator allocator_init(uint64_t page_size){
   }\
 
 //if it returns null there is no space left
-static void* allocator_alloc_internal(allocator* a,uint64_t data_size){
+static void* allocator_allocate_strategy_internal(uint64_t* data_size, allocator_allocation* allocation, allocator_allocation* origin) {
+  allocator_allocation left_side = *allocation;
+  allocator_allocation right_side;
+  if (allocation->head->size > *data_size) {
+    allocation_split(*allocation, *data_size, &left_side, &right_side);
+    if (origin->head->status == IS_FREE_POINTER)
+      *(uint64_t *)origin->ptr = (uint64_t)(uint64_t *)right_side.ptr;
+  }
+  // allocate
+  left_side.head->status = IS_ALLOCATED;
+  return left_side.ptr;
+}
+static void *allocator_alloc_internal(allocator *a, uint64_t data_size) {
   byte* block = (byte*)a->page;
   allocator_allocation allocation = allocation_map_internal(block);
-  allocator_allocation orign = allocation;
-  const uint64_t page_size = a->page_size;
-  byte* end = block + page_size;
+  allocator_allocation origin = allocation;
+  const byte* const end = block + a->page_size;
   allocator_allocation jump;
   
   while(block + allocation.head->size < end){
-      if((allocation.head->status == IS_FREE || allocation.head->status == IS_FREE_FINAL) && allocation.head->size >= data_size){
-        //split the block in half if you can    
-        allocator_allocation left_side = allocation;
-        allocator_allocation right_side;
-        if(allocation.head->size > data_size){
-          allocation_split(allocation, data_size, &left_side, &right_side);
-          
-          if(orign.head->status == IS_FREE_POINTER) {
-            *(uint64_t*)orign.ptr = (uint64_t)(uint64_t*)right_side.ptr;
-          }
-          // printf("Split\n\tleft side: %p\n\tright side: %p\n",left_side.ptr,right_side.ptr);
+    if((allocation.head->status == IS_FREE || allocation.head->status == IS_FREE_FINAL) && allocation.head->size >= data_size){
+      return allocator_allocate_strategy_internal(&data_size, &allocation, &origin);
+    }
+    else if(allocation.head->status == IS_FREE_POINTER){
 
-        }
-        //allocate
-        left_side.head->status = IS_ALLOCATED;
-        return left_side.ptr;
+      if(allocation.head->size >= data_size){
+        return allocator_allocate_strategy_internal(&data_size, &allocation, &origin);
       }
-      else if(allocation.head->status == IS_FREE_POINTER){
-        jump = allocation_map((uint64_t*)*(uint64_t*)allocation.ptr);
-        if(jump.head->status == IS_ALLOCATED)
-          {allocation.head->status = IS_FREE;}
-        else if(jump.head->size >= data_size){
-          orign = allocation;
-          block = jump.ptr - sizeof(allocator_header);
-          // printf("JUMPING to %p\n\n\n\n\n",jump.ptr);
-          goto SKIP;
-        }
 
+      jump = allocation_map((uint64_t*)*(uint64_t*)allocation.ptr);
+      if(jump.head->status == IS_ALLOCATED){
+        allocation.head->status = IS_FREE;
       }
+      else if(jump.head->size >= data_size){
+        origin = allocation;
+        block = jump.ptr - sizeof(allocator_header);
+        goto SKIP;
+      }
+    }
     
-
     block = allocation.ptr + allocation.head->size;
-    SKIP:
-    allocation = allocation_map_internal(block);
+    SKIP: allocation = allocation_map_internal(block);
   }
   return null;
 }
