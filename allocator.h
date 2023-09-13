@@ -61,7 +61,7 @@ static allocator_allocation allocation_map(void* ptr){
 static void allocation_print(allocator_allocation* b){
   
   printf("size: %lu",b->head->size);
-  switch (b->head->status) {
+  switch (b->head->status){
     case IS_FREE: printf(",status:\tIS_FREE\t"); break;
     case IS_FREE_POINTER: printf(",status:\tIS_FREE_POINTER %p\t",(uint64_t*)*(uint64_t*)b->ptr); break;
     case IS_FREE_FINAL: printf(",status:\tIS_FREE_FINAL\t"); break;
@@ -84,7 +84,10 @@ static int8_t allocation_split(allocator_allocation old_alloc,uint64_t rsize,all
   uint8_t* new_alloc_start = old_alloc.ptr + rsize;
   allocator_allocation new_alloc = allocation_map_internal(new_alloc_start);
 
-  *new_alloc.head = (allocator_header){new_block_size - ALLOCATION_HEADER_SIZE, IS_FREE};
+  *new_alloc.head = (allocator_header){new_block_size - ALLOCATION_HEADER_SIZE, old_alloc.head->status};
+  if(old_alloc.head->status == IS_FREE_POINTER){
+    *(uint64_t*)new_alloc.ptr = (uint64_t)*(uint64_t*)old_alloc.ptr; 
+  }
   
   if(left_side)  *left_side = old_alloc;
   if(right_side) *right_side = new_alloc;
@@ -181,7 +184,6 @@ static void* allocator_allocation_recursion_internal(allocator* a,uint64_t data_
 static void* allocator_malloc(allocator* a,uint64_t data_size){
   data_size += sizeof(allocator_header);
   data_size = ALLOCATOR_ALIGN8(data_size);
-  // printf("allocation size:%li\n",data_size);
   return allocator_allocation_recursion_internal(a,data_size);
 }
 
@@ -193,9 +195,9 @@ static void allocator_free(void* ptr){
 static void allocator_defragment_internal(allocator* a){
   byte* page = (byte*)a->page;
   allocator_allocation allocation = allocation_map_internal(page);
+  allocator_allocation prev_allocation = allocation;
   const uint64_t page_size = a->page_size;
   byte *end = page + page_size;
-  allocator_allocation prev_allocation = allocation;
 
   while (allocation.ptr + allocation.head->size <= end){
     if(allocation.head->status == IS_FREE){
