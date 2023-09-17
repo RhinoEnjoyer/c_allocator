@@ -29,10 +29,15 @@ typedef struct allocator{
   struct allocator* next;
 } allocator;
 
+#define allocator_auto_cleanup __attribute__((cleanup(allocator_dealloc)))
+
+
 typedef struct allocator_header{
   uint64_t size;
   uint64_t status;
 } allocator_header;
+
+
 
 typedef struct allocator_allocation{
   allocator_header* head;
@@ -266,27 +271,56 @@ static void allocator_dealloc(allocator* a){
 
 
 //used for smaller allocation you can not free individual allocations from this
-typedef struct allocator_arena{
+typedef struct arena_allocator{
   allocator* alloc;
   uint64_t capacity;
   uint64_t size;
   void* ptr;
-}allocator_arena;
+}arena_allocator;
+
+
+static inline uint64_t arena_allocator_remaining_capacity(arena_allocator* aa){
+  return aa->capacity - aa->size;
+}
+
+static void arena_allocator_print_info(arena_allocator* aa){
+  printf("Allocator: %p\tCapacity: %lu\tSize: %lu\tRemaining capacity: %lu\tPointer: %p\n",aa->alloc,aa->capacity,aa->size,arena_allocator_remaining_capacity(aa),aa->ptr);
+}
+
+#define ALLOCATOR_ARENA_DEBUG_FUNC
+#ifdef ALLOCATOR_ARENA_DEBUG_FUNC
+  #define ALLOCATOR_ARENA_DEBUG_ENABLE(x) x
+  #define ALLOCATOR_ARENA_DEBUG_DISABLE(x)
+#else
+  #define ALLOCATOR_ARENA_DEBUG_ENABLE(x)
+  #define ALLOCATOR_ARENA_DEBUG_DISABLE(x) x
+#endif
+
+
 
 //if the a is null then an allocator will be create for you
-static inline allocator_arena allocator_arena_init(uint64_t capacity,allocator* a){
+static inline arena_allocator arena_allocator_init(uint64_t capacity,allocator* a){
   allocator* alloc = a;
   if(alloc == null){
     alloc = (allocator*)malloc(sizeof(allocator));
-    *alloc = allocator_init(capacity+capacity/2); //Magic NO touch
+    *alloc = allocator_init(capacity+capacity/4); //Magic NO touch
+  }
+
+  if(alloc->page_size < capacity) {
+    ALLOCATOR_ARENA_DEBUG_DISABLE(__builtin_unreachable());
+    ALLOCATOR_ARENA_DEBUG_ENABLE(
+      printf("%s() arena needs more capacity(%lu bytes) allocator can provide(%lu bytes)\n", __FUNCTION__, capacity, alloc->page_size);
+      exit(EXIT_FAILURE);
+    ); 
+    
   }
 
   void* ptr = allocator_malloc(alloc, capacity);
 
-  return (allocator_arena){alloc,capacity,0,ptr};
+  return (arena_allocator){alloc,capacity,0,ptr};
 }
 
-inline void* allocator_arena_malloc(allocator_arena* aa,uint64_t size){
+static void* arena_allocator_malloc(arena_allocator* aa,uint64_t size){
   if(aa->size + size > aa->capacity) return null; //full
 
   uint8_t* rptr = ((uint8_t*)aa->ptr) + aa->size;
@@ -295,12 +329,12 @@ inline void* allocator_arena_malloc(allocator_arena* aa,uint64_t size){
   return rptr;
 }
 
-inline void allocator_arena_reset(allocator_arena* aa){
+inline void arena_allocator_reset(arena_allocator* aa){
   aa->size = 0;
 }
 
 
-static inline allocator* allocator_arena_free(allocator_arena* aa){
+static inline allocator* arena_allocator_free(arena_allocator* aa){
   allocator_free(aa->ptr);
   return aa->alloc;
 }
