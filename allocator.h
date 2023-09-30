@@ -5,10 +5,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#ifndef null
-  #define null NULL
-#endif
-
 enum{IS_FREE, IS_FREE_POINTER, IS_FREE_FINAL, IS_ALLOCATED};
 
 
@@ -105,13 +101,13 @@ static allocator allocator_init(uint64_t page_size){
   allocator a;
   a.page_size = (page_size == ALLOCATOR_USE_DEFAULT_PAGE_SIZE)? ALLOCATOR_DEFAULT_PAGE_SIZE : page_size;
   a.page = ALLOCATOR_INTERNAL_PAGE_ALLOCATOR(a.page_size);
-  a.next = null;
+  a.next = NULL;
 
   *((allocator_header*)(a.page)) = (allocator_header){ a.page_size - ALLOCATION_HEADER_SIZE, IS_FREE};
   return a;
 }
 
-//if it returns null there is no space left
+//if it returns NULL there is no space left
 static void* allocator_allocate_write_internal(uint64_t* data_size, allocator_allocation* allocation, allocator_allocation* origin) {
   allocator_allocation left_side = *allocation;
   allocator_allocation right_side;
@@ -155,13 +151,13 @@ static void *allocator_alloc_internal(allocator *a, uint64_t data_size) {
     block = allocation.ptr + allocation.head->size;
     SKIP: allocation = allocation_map_internal(block);
   }
-  return null;
+  return NULL;
 }
 
 static void* allocator_allocation_recursion_internal(allocator* a,uint64_t data_size){
   //try to do an allocation
   void* p = allocator_alloc_internal(a, data_size);
-  if(p != null) return p;
+  if(p != NULL) return p;
 
   //failed to allocate in this allocation now we create a new page
   a->next = (allocator*)malloc(sizeof(allocator));
@@ -221,7 +217,7 @@ static void allocator_defragment_internal(allocator* a){
 
 static void allocator_defragment(allocator* a){
   allocator* it = a;
-  while (it != null) {
+  while (it != NULL) {
     allocator_defragment_internal(it);
     it = it->next;
   }
@@ -246,7 +242,7 @@ static void allocator_print_allocation(allocator* a){
 static void allocator_print_allocations(allocator *a){
   allocator* it = a;
   uint64_t page_index = 0;
-  while (it != null) {
+  while (it != NULL) {
     printf("Page index:%li\n",page_index);
     allocator_print_allocation(it);
     it = it->next;
@@ -259,7 +255,7 @@ static void allocator_dealloc(allocator* a){
   if(it->page) free(it->page);
   //gotta start from a->next because a might be allocated on the stack
   it = a->next;
-  while(it != null){
+  while(it != NULL){
     allocator* tmp = it;
     if(it->page) free(it->page);
     it = it->next;
@@ -298,10 +294,10 @@ static void arena_allocator_print_info(arena_allocator* aa){
 
 
 
-//if the a is null then an allocator will be create for you
+//if the a is NULL then an allocator will be create for you
 static inline arena_allocator arena_allocator_init(uint64_t capacity,allocator* a){
   allocator* alloc = a;
-  if(alloc == null){
+  if(alloc == NULL){
     alloc = (allocator*)malloc(sizeof(allocator));
     *alloc = allocator_init(capacity+capacity/4); //Magic NO touch
   }
@@ -321,7 +317,7 @@ static inline arena_allocator arena_allocator_init(uint64_t capacity,allocator* 
 }
 
 static void* arena_allocator_malloc(arena_allocator* aa,uint64_t size){
-  if(aa->size + size > aa->capacity) return null; //full
+  if(aa->size + size > aa->capacity) return NULL; //full
 
   uint8_t* rptr = ((uint8_t*)aa->ptr) + aa->size;
   aa->size += size;
