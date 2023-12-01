@@ -254,6 +254,7 @@ static void allocator_dealloc(allocator* a){
   allocator* it = a;
   if(it->page) free(it->page);
   //gotta start from a->next because a might be allocated on the stack
+  // the fuck did I mean by this?
   it = a->next;
   while(it != NULL){
     allocator* tmp = it;
